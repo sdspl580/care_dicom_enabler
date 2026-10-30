@@ -13,18 +13,18 @@ namespace Worklist_SCP.Model
         /// has to be stored in a database or similar, because the following messages like Discontinue or Completed
         /// do refer to this sopInstanceUID rather than to the procedureStepId
         /// </summary>
-        bool SetInProgress(string sopInstanceUID, string procedureStepId);
+        bool SetInProgress(string sopInstanceUID, string procedureStepId,string accessionNumber);
 
         /// <summary>
         /// The procedure which was previous created with the sopInstanceUID is now discontinued
         /// </summary>
-        bool SetDiscontinued(string sopInstanceUID, string reason);
+        bool SetDiscontinued(string sopInstanceUID, string reason, string accessionNumber);
 
         /// <summary>
         /// The procedure which was previous created with the sopInstanceUID is now completed and some
         /// additional information is provided
         /// </summary>
-        bool SetCompleted(string sopInstanceUID, string doseDescription, List<string> affectedInstanceUIDs);
+        bool SetCompleted(string sopInstanceUID, string doseDescription, List<string> affectedInstanceUIDs,string accessionNumber);
 
     }
 }

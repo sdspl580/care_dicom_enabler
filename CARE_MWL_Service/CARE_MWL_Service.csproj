@@ -195,6 +195,7 @@
       <DependentUpon>ProjectInstaller.cs</DependentUpon>
     </Compile>
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Services\MppsApiService.cs" />
     <Compile Include="WorklistServer.cs" />
     <Compile Include="WorklistService.cs" />
   </ItemGroup>
@@ -221,4 +222,19 @@
     </PropertyGroup>
     <Error Condition="!Exists('..\packages\System.Text.Json.6.0.5\build\System.Text.Json.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\System.Text.Json.6.0.5\build\System.Text.Json.targets'))" />
   </Target>
+  
+
+  <!-- Copy the generated config file to the solution-level common Debug folder. -->
+  <Target Name="CopyCAREMWLConfigToCommonDebug" AfterTargets="Build">
+    <PropertyGroup>
+      <ConfigSource>$(MSBuildProjectDirectory)\bin\Debug\CARE_MWL_Service.exe.config</ConfigSource>
+      <ConfigDestination>$(MSBuildProjectDirectory)\..\bin\Debug\CARE_MWL_Service.exe.config</ConfigDestination>
+    </PropertyGroup>
+
+    <Copy SourceFiles="$(ConfigSource)"
+          DestinationFiles="$(ConfigDestination)"
+          SkipUnchangedFiles="false"
+          Condition="Exists('$(ConfigSource)')" />
+  </Target>
+
 </Project>

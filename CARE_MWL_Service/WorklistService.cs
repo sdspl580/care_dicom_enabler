@@ -17,6 +17,7 @@ using System.IO;
 using System.Reflection;
 using Plexus.Common.Database;
 using Plexus.Common.config;
+using Serilog.Core;
 
 namespace Worklist_SCP
 {
@@ -40,7 +41,7 @@ namespace Worklist_SCP
             {
                 if (_mppsSource == null)
                 {
-                    _mppsSource = new MppsHandler(Logger);
+                    _mppsSource = new MppsHandler(fileLogger);
                 }
 
                 return _mppsSource;
@@ -231,25 +232,69 @@ namespace Worklist_SCP
                 return SendAssociationRejectAsync(DicomRejectResult.Permanent, DicomRejectSource.ServiceUser, DicomRejectReason.CalledAENotRecognized);
             }
 
+            //foreach (var pc in association.PresentationContexts)
+            //{
+            //    if (pc.AbstractSyntax == DicomUID.Verification
+            //        || pc.AbstractSyntax == DicomUID.ModalityWorklistInformationModelFind
+            //        || pc.AbstractSyntax == DicomUID.ModalityPerformedProcedureStep
+            //        || pc.AbstractSyntax == DicomUID.ModalityPerformedProcedureStepNotification
+            //        || pc.AbstractSyntax == DicomUID.ModalityPerformedProcedureStepNotification)
+            //    {
+            //        pc.AcceptTransferSyntaxes(_acceptedTransferSyntaxes);
+            //    }
+            //    else
+            //    {
+            //        //Logger.Warn($"Requested abstract syntax {pc.AbstractSyntax} from {association.CallingAE} not supported");
+            //        fileLogger.Warning($"Requested abstract syntax {pc.AbstractSyntax} from {association.CallingAE} not supported");
+            //        pc.SetResult(DicomPresentationContextResult.RejectAbstractSyntaxNotSupported);
+            //    }
+            //}
+
+            ////Logger.Info($"Accepted association request from {association.CallingAE}");
+            ///
+
             foreach (var pc in association.PresentationContexts)
             {
-                if (pc.AbstractSyntax == DicomUID.Verification
-                    || pc.AbstractSyntax == DicomUID.ModalityWorklistInformationModelFind
-                    || pc.AbstractSyntax == DicomUID.ModalityPerformedProcedureStep
-                    || pc.AbstractSyntax == DicomUID.ModalityPerformedProcedureStepNotification
-                    || pc.AbstractSyntax == DicomUID.ModalityPerformedProcedureStepNotification)
+                fileLogger.Information(
+                    $"DICOM Presentation Context: " +
+                    $"ID={pc.ID}, " +
+                    $"AbstractSyntax={pc.AbstractSyntax}, " +
+                    $"UID={pc.AbstractSyntax.UID}");
+
+                if (pc.AbstractSyntax == DicomUID.Verification)
                 {
+                    fileLogger.Information("Accepting C-ECHO");
                     pc.AcceptTransferSyntaxes(_acceptedTransferSyntaxes);
+                }
+                else if (pc.AbstractSyntax ==
+                         DicomUID.ModalityWorklistInformationModelFind)
+                {
+                    fileLogger.Information("Accepting MWL");
+                    pc.AcceptTransferSyntaxes(_acceptedTransferSyntaxes);
+                }
+                else if (pc.AbstractSyntax ==
+                         DicomUID.ModalityPerformedProcedureStep)
+                {
+                    fileLogger.Information(
+                        "******** MPPS REQUESTED ********");
+
+                    pc.AcceptTransferSyntaxes(_acceptedTransferSyntaxes);
+
+                    fileLogger.Information(
+                        "******** MPPS ACCEPTED ********");
                 }
                 else
                 {
-                    //Logger.Warn($"Requested abstract syntax {pc.AbstractSyntax} from {association.CallingAE} not supported");
-                    fileLogger.Warning($"Requested abstract syntax {pc.AbstractSyntax} from {association.CallingAE} not supported");
-                    pc.SetResult(DicomPresentationContextResult.RejectAbstractSyntaxNotSupported);
+                    fileLogger.Warning(
+                        $"Rejecting unsupported SOP Class: " +
+                        $"{pc.AbstractSyntax}");
+
+                    pc.SetResult(
+                        DicomPresentationContextResult
+                            .RejectAbstractSyntaxNotSupported);
                 }
             }
 
-            //Logger.Info($"Accepted association request from {association.CallingAE}");
             fileLogger.Information($"Accepted association request from {association.CallingAE}");
             return SendAssociationAcceptAsync(association);
         }
@@ -267,6 +312,12 @@ namespace Worklist_SCP
             {
                 return new DicomNCreateResponse(request, DicomStatus.SOPClassNotSupported);
             }
+
+            fileLogger.Information(
+    "MPPS N-CREATE FULL DATASET:\n{Dataset}",
+    request.Dataset
+);
+
             // on N-Create the UID is stored in AffectedSopInstanceUID, in N-Set the UID is stored in RequestedSopInstanceUID
             var affectedSopInstanceUID = request.Command.GetSingleValue<string>(DicomTag.AffectedSOPInstanceUID);
             //Logger.Log(LogLevel.Info, $"reeiving N-Create with SOPUID {affectedSopInstanceUID}");
@@ -276,64 +327,193 @@ namespace Worklist_SCP
                 .GetSequence(DicomTag.ScheduledStepAttributesSequence)
                 .First()
                 .GetSingleValue<string>(DicomTag.ScheduledProcedureStepID);
-            var ok = MppsSource.SetInProgress(affectedSopInstanceUID, procedureStepId);
 
+
+            //        var accessionNumber = request.Dataset
+            //.GetSingleValueOrDefault<string>(
+            //    DicomTag.AccessionNumber,
+            //    null);
+
+            string accessionNumber = null;
+
+            if (request.Dataset.Contains(DicomTag.ScheduledStepAttributesSequence))
+            {
+                var sequence = request.Dataset
+                    .GetSequence(DicomTag.ScheduledStepAttributesSequence);
+
+                if (sequence.Items.Count > 0)
+                {
+                    accessionNumber = sequence.Items[0]
+                        .GetSingleValueOrDefault<string>(
+                            DicomTag.AccessionNumber,
+                            null);
+                }
+            }
+
+            fileLogger.Information(
+                $"MPPS N-CREATE: " +
+                $"ProcedureStepID={procedureStepId}, " +
+                $"AccessionNumber={accessionNumber}, " +
+                $"SOPInstanceUID={affectedSopInstanceUID}");
+
+    //        fileLogger.Information(
+    //$"Before SetInProgress: " +
+    //$"SOPInstanceUID={affectedSopInstanceUID}, " +
+    //$"ProcedureStepID={procedureStepId}");
+
+            var ok = MppsSource.SetInProgress(affectedSopInstanceUID, procedureStepId, accessionNumber);
+            fileLogger.Information(
+    $"After SetInProgress: Result={ok}");
             return new DicomNCreateResponse(request, ok ? DicomStatus.Success : DicomStatus.ProcessingFailure);
         }
 
 
-        public async Task<DicomNSetResponse> OnNSetRequestAsync(DicomNSetRequest request)
-        {
-            if (request.SOPClassUID != DicomUID.ModalityPerformedProcedureStep)
-            {
-                return new DicomNSetResponse(request, DicomStatus.SOPClassNotSupported);
-            }
-            // on N-Create the UID is stored in AffectedSopInstanceUID, in N-Set the UID is stored in RequestedSopInstanceUID
-            var requestedSopInstanceUID = request.Command.GetSingleValue<string>(DicomTag.RequestedSOPInstanceUID);
-            //Logger.Log(LogLevel.Info, $"receiving N-Set with SOPUID {requestedSopInstanceUID}");.I
-            fileLogger.Information($"receiving N-Set with SOPUID {requestedSopInstanceUID}");
+        //public async Task<DicomNSetResponse> OnNSetRequestAsync(DicomNSetRequest request)
+        //{
+        //    if (request.SOPClassUID != DicomUID.ModalityPerformedProcedureStep)
+        //    {
+        //        return new DicomNSetResponse(request, DicomStatus.SOPClassNotSupported);
+        //    }
+        //    // on N-Create the UID is stored in AffectedSopInstanceUID, in N-Set the UID is stored in RequestedSopInstanceUID
+        //    var requestedSopInstanceUID = request.Command.GetSingleValue<string>(DicomTag.RequestedSOPInstanceUID);
+        //    //Logger.Log(LogLevel.Info, $"receiving N-Set with SOPUID {requestedSopInstanceUID}");.I
+        //    fileLogger.Information($"receiving N-Set with SOPUID {requestedSopInstanceUID}");
 
-            var status = request.Dataset.GetSingleValue<string>(DicomTag.PerformedProcedureStepStatus);
+        //    var status = request.Dataset.GetSingleValue<string>(DicomTag.PerformedProcedureStepStatus);
+        //    if (status == "COMPLETED")
+        //    {
+        //        // most vendors send some informations with the mpps-completed message. 
+        //        // this information should be stored into the datbase
+        //        var doseDescription = request.Dataset.GetSingleValueOrDefault(DicomTag.CommentsOnRadiationDose, string.Empty);
+        //        var listOfInstanceUIDs = new List<string>();
+        //        foreach (var seriesDataset in request.Dataset.GetSequence(DicomTag.PerformedSeriesSequence))
+        //        {
+        //            // you can read here some information about the series that the modalidy created
+        //            //seriesDataset.Get(DicomTag.SeriesDescription, string.Empty);
+        //            //seriesDataset.Get(DicomTag.PerformingPhysicianName, string.Empty);
+        //            //seriesDataset.Get(DicomTag.ProtocolName, string.Empty);
+        //            foreach (var instanceDataset in seriesDataset.GetSequence(DicomTag.ReferencedImageSequence))
+        //            {
+        //                // here you can read the SOPClassUID and SOPInstanceUID
+        //                var instanceUID = instanceDataset.GetSingleValueOrDefault(DicomTag.ReferencedSOPInstanceUID, string.Empty);
+        //                if (!string.IsNullOrEmpty(instanceUID))
+        //                {
+        //                    listOfInstanceUIDs.Add(instanceUID);
+        //                }
+        //            }
+        //        }
+        //        var ok = MppsSource.SetCompleted(requestedSopInstanceUID, doseDescription, listOfInstanceUIDs);
+
+        //        return new DicomNSetResponse(request, ok ? DicomStatus.Success : DicomStatus.ProcessingFailure);
+        //    }
+        //    else if (status == "DISCONTINUED")
+        //    {
+        //        // some vendors send a reason code or description with the mpps-discontinued message
+        //        // var reason = request.Dataset.Get(DicomTag.PerformedProcedureStepDiscontinuationReasonCodeSequence);
+        //        var ok = MppsSource.SetDiscontinued(requestedSopInstanceUID, string.Empty);
+
+        //        return new DicomNSetResponse(request, ok ? DicomStatus.Success : DicomStatus.ProcessingFailure);
+        //    }
+        //    else
+        //    {
+        //        return new DicomNSetResponse(request, DicomStatus.InvalidAttributeValue);
+        //    }
+        //}
+
+        public async Task<DicomNSetResponse> OnNSetRequestAsync(
+    DicomNSetRequest request)
+        {
+            if (request.SOPClassUID !=
+                DicomUID.ModalityPerformedProcedureStep)
+            {
+                return new DicomNSetResponse(
+                    request,
+                    DicomStatus.SOPClassNotSupported);
+            }
+
+            // N-Set: MPPS UID is in RequestedSOPInstanceUID
+            var requestedSopInstanceUID =
+                request.Command.GetSingleValue<string>(
+                    DicomTag.RequestedSOPInstanceUID);
+
+            fileLogger.Information(
+                $"receiving N-Set with SOPUID " +
+                $"{requestedSopInstanceUID}");
+
+            // Get Accession Number
+            var accessionNumber =
+                request.Dataset.GetSingleValueOrDefault(
+                    DicomTag.AccessionNumber,
+                    string.Empty);
+
+            fileLogger.Information(
+                $"MPPS Accession Number: [{accessionNumber}]");
+
+            // Get MPPS status
+            var status =
+                request.Dataset.GetSingleValue<string>(
+                    DicomTag.PerformedProcedureStepStatus);
+
             if (status == "COMPLETED")
             {
-                // most vendors send some informations with the mpps-completed message. 
-                // this information should be stored into the datbase
-                var doseDescription = request.Dataset.GetSingleValueOrDefault(DicomTag.CommentsOnRadiationDose, string.Empty);
-                var listOfInstanceUIDs = new List<string>();
-                foreach (var seriesDataset in request.Dataset.GetSequence(DicomTag.PerformedSeriesSequence))
+                var doseDescription =
+                    request.Dataset.GetSingleValueOrDefault(
+                        DicomTag.CommentsOnRadiationDose,
+                        string.Empty);
+
+                var listOfInstanceUIDs =
+                    new List<string>();
+
+                foreach (var seriesDataset in
+                    request.Dataset.GetSequence(
+                        DicomTag.PerformedSeriesSequence))
                 {
-                    // you can read here some information about the series that the modalidy created
-                    //seriesDataset.Get(DicomTag.SeriesDescription, string.Empty);
-                    //seriesDataset.Get(DicomTag.PerformingPhysicianName, string.Empty);
-                    //seriesDataset.Get(DicomTag.ProtocolName, string.Empty);
-                    foreach (var instanceDataset in seriesDataset.GetSequence(DicomTag.ReferencedImageSequence))
+                    foreach (var instanceDataset in
+                        seriesDataset.GetSequence(
+                            DicomTag.ReferencedImageSequence))
                     {
-                        // here you can read the SOPClassUID and SOPInstanceUID
-                        var instanceUID = instanceDataset.GetSingleValueOrDefault(DicomTag.ReferencedSOPInstanceUID, string.Empty);
+                        var instanceUID =
+                            instanceDataset.GetSingleValueOrDefault(
+                                DicomTag.ReferencedSOPInstanceUID,
+                                string.Empty);
+
                         if (!string.IsNullOrEmpty(instanceUID))
                         {
                             listOfInstanceUIDs.Add(instanceUID);
                         }
                     }
                 }
-                var ok = MppsSource.SetCompleted(requestedSopInstanceUID, doseDescription, listOfInstanceUIDs);
 
-                return new DicomNSetResponse(request, ok ? DicomStatus.Success : DicomStatus.ProcessingFailure);
+                var ok = MppsSource.SetCompleted(
+                    requestedSopInstanceUID,
+                    doseDescription,
+                    listOfInstanceUIDs,accessionNumber);
+
+                return new DicomNSetResponse(
+                    request,
+                    ok
+                        ? DicomStatus.Success
+                        : DicomStatus.ProcessingFailure);
             }
             else if (status == "DISCONTINUED")
             {
-                // some vendors send a reason code or description with the mpps-discontinued message
-                // var reason = request.Dataset.Get(DicomTag.PerformedProcedureStepDiscontinuationReasonCodeSequence);
-                var ok = MppsSource.SetDiscontinued(requestedSopInstanceUID, string.Empty);
+                var ok = MppsSource.SetDiscontinued(
+                    requestedSopInstanceUID,
+                    string.Empty,accessionNumber);
 
-                return new DicomNSetResponse(request, ok ? DicomStatus.Success : DicomStatus.ProcessingFailure);
+                return new DicomNSetResponse(
+                    request,
+                    ok
+                        ? DicomStatus.Success
+                        : DicomStatus.ProcessingFailure);
             }
             else
             {
-                return new DicomNSetResponse(request, DicomStatus.InvalidAttributeValue);
+                return new DicomNSetResponse(
+                    request,
+                    DicomStatus.InvalidAttributeValue);
             }
         }
-
 
         #region not supported methods but that are required because of the interface
 

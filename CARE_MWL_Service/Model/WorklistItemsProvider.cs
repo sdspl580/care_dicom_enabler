@@ -189,9 +189,11 @@ namespace Worklist_SCP.Model
             try
             {
                 string errorString = string.Empty;
-
+                
                 Task<string> task = GetCareWorklistDetailsAsync();
+                
                 string responseBody = task.Result;
+                objReadWriteLog.WriteToLog("responseBody : " + responseBody, true);
 
                 CareWorklistResponse careResponse = JsonConvert.DeserializeObject<CareWorklistResponse>(responseBody);
 
@@ -296,6 +298,7 @@ namespace Worklist_SCP.Model
             try
             {
                 string baseUrl = ConfigurationManager.AppSettings["careBaseUrl"].ToString();
+                
                 string token = ConfigurationManager.AppSettings["careToken"].ToString();
                 string modality = ConfigurationManager.AppSettings["careModality"].ToString();
                 string fromDate = ConfigurationManager.AppSettings["careFromDate"].ToString();
